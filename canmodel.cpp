@@ -7,8 +7,9 @@
 CanModel::CanModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
-    // 50ms 一次，把缓冲里的数据批量搬到 model 并顺手保存
-    _flushTimer.setInterval(1000);
+    // 50ms 一次，把缓冲里的数据批量搬到 model 并顺手保存。
+    // 原来是 1000ms，CAN 高频数据下会造成显示明显滞后。
+    _flushTimer.setInterval(50);
     _flushTimer.setSingleShot(false);
     connect(&_flushTimer, &QTimer::timeout, this, &CanModel::flushBuffer);
 }

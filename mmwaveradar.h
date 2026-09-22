@@ -36,6 +36,7 @@ private slots:
     void updatePlotRange(double xRange, double yRange);
     void wgtCloseBtnClicked();
     void receiveData(VCI_CAN_OBJ data);
+    void processReceivedData();
     void receiveSignal(bool flag, VCI_CAN_OBJ data);
     void on_btn_connectDev_clicked();
     void scrollToBottom();
@@ -113,7 +114,6 @@ private:
     bool mconnect=false;
     bool isPaused = false;
     CanModel *model;
-    QList<QPair<CanMsgType, VCI_CAN_OBJ>> bufferedData;
     int obsCount = 0; // 障碍物数量
     QList<ObstacleInfo> obsList;
     QVector<QCheckBox*> targetCheckboxes;

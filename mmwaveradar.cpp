@@ -30,8 +30,14 @@ mmWaveRadar::mmWaveRadar(QWidget *parent)
     qRegisterMetaType<ObstacleInfo>("ObstacleInfo");
 
     canThread = new CANThread;
-    connect(canThread, &CANThread::send1data, this, &mmWaveRadar::receiveData);
-    connect(canThread, &CANThread::sendSignal, this, &mmWaveRadar::receiveSignal);
+
+    // 高频 CAN 数据不再逐帧 queued 到 GUI。
+    // dataReady 只是一个“有数据”的通知，GUI 每次主动取有限数量的数据，
+    // 从根源上避免 Qt 主线程事件队列堆积，保证 btn_pause 能及时响应。
+    connect(canThread, &CANThread::dataReady,
+            this, &mmWaveRadar::processReceivedData);
+    connect(canThread, &CANThread::sendSignal,
+            this, &mmWaveRadar::receiveSignal);
 
     sendTimer = new QTimer(this);
     connect(sendTimer, &QTimer::timeout, this, &mmWaveRadar::sendData2Dev);
@@ -614,16 +620,36 @@ void mmWaveRadar::wgtCloseBtnClicked()
 
 }
 
+void mmWaveRadar::processReceivedData()
+{
+    if (!canThread)
+        return;
+
+    // 每次 GUI 事件最多处理 200 帧。
+    // 即使 CAN 数据持续高速到达，也不会出现一个槽函数长时间占用 GUI 线程。
+    const QVector<VCI_CAN_OBJ> batch = canThread->takeReceivedData(200);
+
+    if (isPaused) {
+        // 暂停期间不追赶历史数据，保持“暂停就是冻结当前界面”的语义。
+        canThread->clearReceivedData();
+        return;
+    }
+
+    for (const VCI_CAN_OBJ &data : batch)
+        receiveData(data);
+
+    // 如果取完本批后还有新数据，挂一个新的通知。
+    canThread->notifyDataReadyIfNeeded();
+}
+
 void mmWaveRadar::receiveData(VCI_CAN_OBJ data)
 {
-    if (isPaused) {
-        // 暂停状态，把数据存入缓存
-        bufferedData.append(qMakePair(CanMsgType::Receive, data));
-    } else {
-        // 直接更新表格
-        model->appendData(CanMsgType::Receive, data);
-    }
-    // 解析 在界面显示
+    if (isPaused)
+        return;
+
+    model->appendData(CanMsgType::Receive, data);
+
+    // 非暂停状态才更新雷达图。
     parseData(data);
 }
 
@@ -685,17 +711,19 @@ void mmWaveRadar::saveFileFinished()
 
 void mmWaveRadar::on_btn_pause_clicked()
 {
-    if (isPaused) {
-        model->appendBufferedData(bufferedData);
-        bufferedData.clear();  // 清空缓存
-        // 重新启用刷新
-        ui->btn_pause->setText("停止刷新");
-    } else {
-        // 暂停刷新
-        ui->btn_pause->setText("开始刷新");
-    }
+    // 先切换状态，再清理接收邮箱。这样暂停按钮一旦被点击，
+    // 后续到达 GUI 的数据都会立即被丢弃，不会再补刷几万行历史数据。
+    isPaused = !isPaused;
 
-    isPaused = !isPaused;  // 切换状态
+    if (isPaused) {
+        ui->btn_pause->setText("开始刷新");
+        canThread->clearReceivedData();
+    } else {
+        ui->btn_pause->setText("停止刷新");
+        // 恢复时从最新数据开始，不回放暂停期间积压的数据。
+        canThread->clearReceivedData();
+        canThread->notifyDataReadyIfNeeded();
+    }
 }
 
 void mmWaveRadar::receiveObstacleInfoList(QList<ObstacleInfo> obsList)
@@ -705,20 +733,14 @@ void mmWaveRadar::receiveObstacleInfoList(QList<ObstacleInfo> obsList)
 
 void mmWaveRadar::receiveSignal(bool flag, VCI_CAN_OBJ data)
 {
-    if (isPaused) {
-        // 暂停状态，把数据存入缓存
-        if (flag) {
-            bufferedData.append(qMakePair(CanMsgType::SendSuccess, data));
-        } else {
-            bufferedData.append(qMakePair(CanMsgType::SendFail, data));
-        }
+    // 暂停时不缓存发送结果，避免恢复时一次性补刷大量历史行。
+    if (isPaused)
+        return;
+
+    if (flag) {
+        model->appendData(CanMsgType::SendSuccess, data);
     } else {
-        // 直接更新表格
-        if (flag) {
-            model->appendData(CanMsgType::SendSuccess, data);
-        } else {
-            model->appendData(CanMsgType::SendFail, data);
-        }
+        model->appendData(CanMsgType::SendFail, data);
     }
 }
 

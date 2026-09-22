@@ -3,6 +3,8 @@
 #include <QTime>
 #include <QCoreApplication>
 #include <QMetaType>
+#include <QMutexLocker>
+#include <QVector>
 #include <string.h>
 
 CANThread::CANThread()
@@ -216,15 +218,96 @@ void CANThread::run()
         VCI_CAN_OBJ vco[2500];
         dwRel = VCI_Receive(m_deviceType, m_debicIndex, canind, vco,2500,0);
         if(dwRel > 0){
-            for(int i=0;i<dwRel;i++)
-            {
-                emit send1data(vco[i]);
-            }
-            // emit getProtocolData(vco,dwRel,0);
+            // 不再为每一帧发送一个 queued signal。
+            // 高频 CAN 数据下，逐帧 signal 会把 GUI 主线程事件队列塞满，
+            // 导致 btn_pause 的鼠标事件长时间得不到处理。
+            enqueueReceivedData(vco, static_cast<int>(dwRel));
         }
         sleep(30);
     }
     stopped = false;
+}
+
+
+void CANThread::enqueueReceivedData(const VCI_CAN_OBJ *data, int count)
+{
+    if (data == nullptr || count <= 0)
+        return;
+
+    bool notify = false;
+    {
+        QMutexLocker locker(&receiveMutex);
+
+        // 保留最新数据，避免 GUI 暂停/繁忙时内存无限增长。
+        if (count >= MAX_RECEIVE_BUFFER) {
+            receiveBuffer.clear();
+            receiveBuffer.reserve(MAX_RECEIVE_BUFFER);
+            for (int i = count - MAX_RECEIVE_BUFFER; i < count; ++i)
+                receiveBuffer.append(data[i]);
+        } else {
+            const int overflow = receiveBuffer.size() + count - MAX_RECEIVE_BUFFER;
+            if (overflow > 0)
+                receiveBuffer.remove(0, overflow);
+
+            receiveBuffer.reserve(qMin(MAX_RECEIVE_BUFFER, receiveBuffer.size() + count));
+            for (int i = 0; i < count; ++i)
+                receiveBuffer.append(data[i]);
+        }
+
+        // 一个时刻最多挂一个 dataReady 事件，彻底避免事件队列堆积。
+        if (!receiveNotificationPending) {
+            receiveNotificationPending = true;
+            notify = true;
+        }
+    }
+
+    if (notify)
+        emit dataReady();
+}
+
+QVector<VCI_CAN_OBJ> CANThread::takeReceivedData(int maxCount)
+{
+    QVector<VCI_CAN_OBJ> result;
+
+    if (maxCount <= 0)
+        return result;
+
+    QMutexLocker locker(&receiveMutex);
+
+    const int count = qMin(maxCount, receiveBuffer.size());
+    if (count > 0) {
+        result.reserve(count);
+        for (int i = 0; i < count; ++i)
+            result.append(receiveBuffer.at(i));
+        receiveBuffer.remove(0, count);
+    }
+
+    // 本次通知已经被 GUI 消费；如果还有数据，GUI 处理完当前批次后
+    // 会再次调用 notifyDataReadyIfNeeded()。
+    receiveNotificationPending = false;
+    return result;
+}
+
+void CANThread::notifyDataReadyIfNeeded()
+{
+    bool notify = false;
+    {
+        QMutexLocker locker(&receiveMutex);
+        if (!receiveBuffer.isEmpty() && !receiveNotificationPending) {
+            receiveNotificationPending = true;
+            notify = true;
+        }
+    }
+
+    if (notify)
+        emit dataReady();
+}
+
+void CANThread::clearReceivedData()
+{
+    QMutexLocker locker(&receiveMutex);
+    receiveBuffer.clear();
+    receiveNotificationPending = false;
 }
 
 void CANThread::sleep(int msec)
