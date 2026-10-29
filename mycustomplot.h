@@ -16,6 +16,8 @@ public:
     void updatePlot(double x, double y, int angle);
     void drawObstaclesWithText(const QList<ObstacleInfo> &obsList);
     void clearObstacles();
+    void setCollisionRegion(double minLat, double minLong, double maxLat, double maxLong);
+    void clearCollisionRegion();
 
     void setLabelDisplayOptions(const LabelDisplayOptions &options);  // 添加接口
     void updateTargetState(const showTargetState &state);  // 公有函数
@@ -62,6 +64,7 @@ private:
 
     QTimer *timer; // 绿色弧线闪动用的
 
+    QCPItemRect *collisionRegionRect = nullptr;
     QCPItemLine *biaodingLine = nullptr;
     QCPItemLine *line1 = nullptr;
     QCPItemCurve *biaodingArc = nullptr;
