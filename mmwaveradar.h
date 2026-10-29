@@ -38,6 +38,7 @@ private slots:
     void receiveData(VCI_CAN_OBJ data);
     void processReceivedData();
     void receiveSignal(bool flag, VCI_CAN_OBJ data);
+    void processCollisionConfig(const VCI_CAN_OBJ &data);
     void on_btn_connectDev_clicked();
     void scrollToBottom();
     void saveFileFinished();
@@ -78,6 +79,7 @@ private slots:
     void on_pushButton_23_clicked();
 
 private:
+    bool collisionDetectionEnabled = false;
     void initUI();
     void initTittleBar();
     void setupButtons();
