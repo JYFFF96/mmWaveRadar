@@ -16,7 +16,7 @@ CanModel::CanModel(QObject *parent)
 
 int CanModel::rowCount(const QModelIndex &) const
 {
-    return dataList.size();
+    return mergeIDEnabled ? mergedRows.size() : dataList.size();
 }
 
 int CanModel::columnCount(const QModelIndex &) const
@@ -30,7 +30,9 @@ QVariant CanModel::data(const QModelIndex &index, int role) const
         return QVariant();
 
     QMutexLocker locker(&mutex);
-    const auto &entry = dataList.at(index.row());
+    if (index.row() < 0 || index.row() >= (mergeIDEnabled ? mergedRows.size() : dataList.size()))
+        return QVariant();
+    const auto &entry = dataList.at(mergeIDEnabled ? mergedRows.at(index.row()) : index.row());
     CanMsgType type = entry.first;
     const VCI_CAN_OBJ &obj = entry.second;
 
@@ -115,6 +117,10 @@ void CanModel::flushBuffer()
         _buffer.erase(_buffer.begin(), _buffer.begin() + n);
     }
 
+    // 合并模式保留完整原始报文历史，仅将表格映射到每个 ID 的最新报文。
+    // 这里使用模型 reset，确保高频批量更新及旧行裁剪后索引不会失效。
+    if (mergeIDEnabled) beginResetModel();
+
     // 先处理裁剪（保持 MAX_ROWS）
     int removeCount = 0;
     {
@@ -122,19 +128,21 @@ void CanModel::flushBuffer()
         if (dataList.size() + batch.size() > MAX_ROWS)
             removeCount = dataList.size() + batch.size() - MAX_ROWS;
         if (removeCount > 0) {
-            beginRemoveRows(QModelIndex(), 0, removeCount - 1);
+            if (!mergeIDEnabled) beginRemoveRows(QModelIndex(), 0, removeCount - 1);
             dataList.erase(dataList.begin(), dataList.begin() + removeCount);
-            endRemoveRows();
+            if (!mergeIDEnabled) endRemoveRows();
         }
 
         // 批量插入
         const int first = dataList.size();
         const int last  = first + batch.size() - 1;
-        beginInsertRows(QModelIndex(), first, last);
+        if (!mergeIDEnabled) beginInsertRows(QModelIndex(), first, last);
         for (const auto &e : batch) dataList.append(e);
-        endInsertRows();
+        if (!mergeIDEnabled) endInsertRows();
+        if (mergeIDEnabled) rebuildMergedRows();
     }
 
+    if (mergeIDEnabled) endResetModel();
     emit newDataAdded();
 
     // —— 同步保存“本批新增行” —— //
@@ -163,11 +171,39 @@ void CanModel::flushBuffer()
 
 /*===============================================================================*/
 
+void CanModel::rebuildMergedRows()
+{
+    mergedRows.clear();
+    QHash<quint32, int> rowById;
+    for (int i = 0; i < dataList.size(); ++i) {
+        const quint32 id = dataList.at(i).second.ID;
+        auto it = rowById.find(id);
+        if (it == rowById.end()) {
+            rowById.insert(id, mergedRows.size());
+            mergedRows.append(i);
+        } else {
+            mergedRows[*it] = i;
+        }
+    }
+}
+
+void CanModel::setMergeID(bool enabled)
+{
+    if (mergeIDEnabled == enabled) return;
+    QMutexLocker locker(&mutex);
+    beginResetModel();
+    mergeIDEnabled = enabled;
+    if (enabled) rebuildMergedRows();
+    else mergedRows.clear();
+    endResetModel();
+}
+
 void CanModel::clearData()
 {
     QMutexLocker locker(&mutex);
     beginResetModel();
     dataList.clear();
+    mergedRows.clear();
     _buffer.clear();
     endResetModel();
 }
