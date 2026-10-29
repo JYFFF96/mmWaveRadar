@@ -72,6 +72,30 @@ myCustomPlot::myCustomPlot(QWidget *parent) : QCustomPlot(parent),
 
 }
 
+void myCustomPlot::setCollisionRegion(double minLat, double minLong, double maxLat, double maxLong)
+{
+    if (!collisionRegionRect) {
+        collisionRegionRect = new QCPItemRect(this);
+        collisionRegionRect->topLeft->setAxes(xAxis, yAxis);
+        collisionRegionRect->bottomRight->setAxes(xAxis, yAxis);
+        collisionRegionRect->setPen(QPen(Qt::red, 2));
+        collisionRegionRect->setBrush(Qt::NoBrush);
+        collisionRegionRect->setLayer("overlay");
+    }
+    collisionRegionRect->topLeft->setCoords(minLat, maxLong);
+    collisionRegionRect->bottomRight->setCoords(maxLat, minLong);
+    collisionRegionRect->setVisible(true);
+    replot(QCustomPlot::rpQueuedReplot);
+}
+
+void myCustomPlot::clearCollisionRegion()
+{
+    if (collisionRegionRect) {
+        collisionRegionRect->setVisible(false);
+        replot(QCustomPlot::rpQueuedReplot);
+    }
+}
+
 void myCustomPlot::onMouseMove(QMouseEvent *event)
 {
     // 获取鼠标的像素坐标
