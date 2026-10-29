@@ -115,6 +115,8 @@ void mmWaveRadar::initUI()
     connect(ui->checkBox_asc, &QCheckBox::toggled, model, &CanModel::setSaveAsc);
     connect(ui->checkBox_blf, &QCheckBox::toggled, model, &CanModel::setSaveBlf);
     connect(ui->checkBox_excel, &QCheckBox::toggled, model, &CanModel::setSaveExcel);
+    connect(ui->checkBox_mergeID, &QCheckBox::toggled, model, &CanModel::setMergeID);
+    model->setMergeID(ui->checkBox_mergeID->isChecked());
 }
 
 void mmWaveRadar::initWidgets(QWidget *wgt, int w, int h)
