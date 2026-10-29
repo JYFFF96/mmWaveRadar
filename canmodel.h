@@ -3,6 +3,8 @@
 
 #include <QAbstractTableModel>
 #include <QList>
+#include <QVector>
+#include <QHash>
 #include <QMutex>
 #include <QTimer>
 #include <QFile>
@@ -36,7 +38,8 @@ public:
     void appendBufferedData(const QList<QPair<CanMsgType, VCI_CAN_OBJ>> &buffer);
 
     void clearData();
-    void updateParsing(bool enabled); // 开启/关闭解析
+    void updateParsing(bool enabled);
+    void setMergeID(bool enabled); // 按 CAN 帧 ID 仅显示最后一条 // 开启/关闭解析
 
     // 开启/关闭自动保存（路径在 flag=true 时生效）
     void enableAutoSave(bool flag, const QString filePath);
@@ -68,6 +71,9 @@ private:
     // 数据与并发
     QList<QPair<CanMsgType, VCI_CAN_OBJ>> dataList;  // (type, obj)
     mutable QMutex mutex;
+    bool mergeIDEnabled = false;
+    QVector<int> mergedRows; // 可见行 -> dataList 中最新报文下标
+    void rebuildMergedRows();
     bool parseEnabled = false;
 
     // 显示性能
