@@ -740,12 +740,58 @@ void mmWaveRadar::receiveSignal(bool flag, VCI_CAN_OBJ data)
         return;
 
     if (flag) {
+        processCollisionConfig(data);
         model->appendData(CanMsgType::SendSuccess, data);
     } else {
         model->appendData(CanMsgType::SendFail, data);
     }
 }
 
+
+void mmWaveRadar::processCollisionConfig(const VCI_CAN_OBJ &data)
+{
+    // 只对已成功发送的标准数据帧配置绘制区域；SensorID=0。
+    if (data.RemoteFlag || data.ExternFlag || data.DataLen != 8)
+        return;
+
+    if (data.ID == 0x400) {
+        if (data.Data[0] == 0x80) {
+            collisionDetectionEnabled = false;
+            ui->customPlot->clearCollisionRegion();
+        } else if (data.Data[0] & 0x02) {
+            collisionDetectionEnabled = true;
+        } else {
+            collisionDetectionEnabled = false;
+            ui->customPlot->clearCollisionRegion();
+        }
+        return;
+    }
+
+    if (data.ID != 0x401 || !collisionDetectionEnabled)
+        return;
+
+    // 仅支持区域 1；Activation、CoordinatesValid 必须同时为 1。
+    if ((data.Data[0] & 0x06) != 0x06 || (data.Data[1] & 0x07) != 1)
+        return;
+
+    // MR76：Big Endian 跨字节编码，分辨率 0.2m。
+    const int long1 = (int(data.Data[2]) << 5) | (data.Data[3] >> 3);
+    const int lat1  = ((data.Data[3] & 0x07) << 8) | data.Data[4];
+    const int long2 = (int(data.Data[5]) << 5) | (data.Data[6] >> 3);
+    const int lat2  = ((data.Data[6] & 0x07) << 8) | data.Data[7];
+
+    const double p1Long = long1 * 0.2 - 500.0;
+    const double p1Lat  = lat1 * 0.2 - 204.6;
+    const double p2Long = long2 * 0.2 - 500.0;
+    const double p2Lat  = lat2 * 0.2 - 204.6;
+
+    // Point1 右下角，Point2 左上角。非法区域不覆盖已有有效配置。
+    if (p1Long >= p2Long || p1Lat <= p2Lat)
+        return;
+
+    // customPlot：X 为 Lat，Y 为 Long。
+    ui->customPlot->setCollisionRegion(p2Lat, p1Long, p1Lat, p2Long);
+}
 
 void mmWaveRadar::on_btn_clearTable_clicked()
 {
